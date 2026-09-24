@@ -1,11 +1,11 @@
-export type ProductId = 'codebase-llm-wiki' | 'merge-reviewer';
+export type ProductId = 'codebase-llm-wiki' | 'merge-reviewer' | 'megin';
 
 export interface ProductDefinition {
   readonly id: ProductId;
   readonly title: string;
   readonly repository: string;
   readonly releasePage: string;
-  readonly kind: 'wiki' | 'skill';
+  readonly kind: 'wiki' | 'skill' | 'skill-bundle';
   readonly installRelativePath: string;
   readonly archiveRoot: (version: string) => string;
   readonly archiveAssetName: (version: string) => string;
@@ -31,6 +31,16 @@ export const PRODUCT_CATALOG: readonly ProductDefinition[] = Object.freeze([
     installRelativePath: '.agents/skills/merge-reviewer',
     archiveRoot: () => 'merge-reviewer',
     archiveAssetName: version => `merge-reviewer-${version}.zip`
+  },
+  {
+    id: 'megin',
+    title: 'Megin',
+    repository: 'dennis8499/Megin',
+    releasePage: 'https://github.com/dennis8499/Megin/releases',
+    kind: 'skill-bundle',
+    installRelativePath: '.agents/skills',
+    archiveRoot: () => '',
+    archiveAssetName: () => 'megin-skills.zip'
   }
 ]);
 

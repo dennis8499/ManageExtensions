@@ -15,7 +15,7 @@ export interface ProductGuide {
   readonly features: readonly GuideFeature[];
 }
 
-// Curated Codex usage examples from the two upstream repositories. These are
+// Curated Codex usage examples from the upstream repositories. These are
 // bundled with this extension; installation and release checks remain separate.
 export const PRODUCT_GUIDES: readonly ProductGuide[] = [
   {
@@ -139,6 +139,44 @@ export const PRODUCT_GUIDES: readonly ProductGuide[] = [
         title: '直接比較兩個版本',
         description: '比較兩個明確指定的 branch、tag 或 commit 之間的完整差異。',
         template: '$merge-reviewer 基礎分支={版本A} 比較分支={版本B} 比較模式=直接比較'
+      }
+    ]
+  },
+  {
+    productId: 'megin',
+    summary: 'Megin coordinates a repository task through requirement discovery, planning, implementation, review, and acceptance. Megin v0.1.0 expects to start at a non-Git Group root; installing the skills in a Git repository is supported, but Megin workflows are not guaranteed to work there.',
+    keyword: '$megin',
+    sourceUrl: 'https://github.com/dennis8499/Megin/blob/v0.1.0/README.md',
+    features: [
+      {
+        id: 'feature-task',
+        title: 'Start a feature task',
+        description: 'Ask Megin to explore the change, prepare an approval-ready plan, then implement, review, and verify the accepted work.',
+        template: '$megin 幫我新增 {feature}。先探索現有程式與需求，整理可驗收的行為和實作計畫；等我核准計畫後再實作，並完成審查與驗收。'
+      },
+      {
+        id: 'diagnose-bug',
+        title: 'Diagnose a defect',
+        description: 'Reproduce a suspected defect and collect read-only evidence before planning a repair.',
+        template: '$megin-bug-diagnosis 診斷 {issue}。先找出可重現步驟和證據，再提出修復計畫。'
+      },
+      {
+        id: 'review-changes',
+        title: 'Review a change',
+        description: 'Review the current Megin task snapshot for behavior fit, code quality, tests, and scope safety.',
+        template: '$megin-code-review 審查目前 {task} 的整合變更，檢查行為、程式品質、測試、知識與範圍。'
+      },
+      {
+        id: 'plan-work',
+        title: 'Prepare an implementation plan',
+        description: 'Turn an explored requirement into a bounded plan with behavior scenarios and verification commands.',
+        template: '$megin-technical-planning 為 {change} 建立可驗收的 Gherkin 情境、依賴順序、TDD 步驟和驗證命令。'
+      },
+      {
+        id: 'continue-task',
+        title: 'Continue the current task',
+        description: 'Resume the active Megin task from its approved plan and latest recorded evidence.',
+        template: '$megin 繼續目前的 Megin 任務，先讀取已核准計畫與最新證據，再完成尚未處理的步驟。'
       }
     ]
   }

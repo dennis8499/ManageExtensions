@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -7,14 +8,15 @@ import { PRODUCT_CATALOG } from '../../src/catalog';
 import { getProductGuide, PRODUCT_GUIDES } from '../../src/productGuides';
 import { copyGuideRequest, renderProductGuideHtml } from '../../src/productGuidePage';
 import { installMergeReviewer } from '../../src/adapters/mergeReviewerInstaller';
+import { installMegin } from '../../src/adapters/meginInstaller';
 import { type InstallInteraction } from '../../src/adapters/interaction';
 import { installWiki } from '../../src/adapters/wikiInstaller';
 import { safeArchivePath, validateArchiveEntry, extractReleaseArchive } from '../../src/archive/secureArchive';
 import { GitHubReleaseClient, validateWikiManifest, type GitHubRelease } from '../../src/github/releases';
 import { runProcess, type ProcessResult, type PythonCommand } from '../../src/process';
 import { compareVersions, parseStableVersionTag } from '../../src/version';
-import { isLocalWindowsDrive, resolveInstallTarget, type InstallTarget, type WorkspaceCandidate } from '../../src/workspace/target';
-import { makeSkillZip, makeWikiZip, makeZip } from '../helpers/zip';
+import { isLocalWindowsDrive, resolveInstallTarget, resolveMeginInstallTarget, type InstallTarget, type WorkspaceCandidate } from '../../src/workspace/target';
+import { makeMeginZip, makeSkillZip, makeWikiZip, makeZip, MEGIN_SKILL_DIRECTORIES } from '../helpers/zip';
 
 class AcceptanceWorld {
   root?: string;
@@ -27,6 +29,7 @@ class AcceptanceWorld {
   interaction?: InstallInteraction;
   processCalls: Array<{ args: readonly string[]; cwd?: string }> = [];
   warnings: string[] = [];
+  errors: string[] = [];
   prompts: string[] = [];
   installedVersion?: string;
   beforeTree?: Record<string, string>;
@@ -68,8 +71,8 @@ When('the product view is opened', function(this: AcceptanceWorld) {
   this.productNames = PRODUCT_CATALOG.map(product => product.title);
 });
 
-Then('Codebase LLM Wiki and MergeReviewer are listed with their installation status', function(this: AcceptanceWorld) {
-  assert.deepEqual(this.productNames, ['Codebase LLM Wiki (Codex)', 'MergeReviewer']);
+Then('Codebase LLM Wiki, MergeReviewer, and Megin are listed with their installation status', function(this: AcceptanceWorld) {
+  assert.deepEqual(this.productNames, ['Codebase LLM Wiki (Codex)', 'MergeReviewer', 'Megin']);
 });
 
 Then('an untrusted, non-Windows, virtual, mapped network, or non-Git workspace cannot start installation', async function(this: AcceptanceWorld) {
@@ -218,7 +221,7 @@ Then('absolute, traversal, duplicate, and symlink ZIP entries are rejected', asy
 });
 
 Given('startup update checks are enabled', function(this: AcceptanceWorld) {
-  assert.equal(PRODUCT_CATALOG.length, 2);
+  assert.equal(PRODUCT_CATALOG.length, 3);
 });
 
 When('a newer stable release is found', async function(this: AcceptanceWorld) {
@@ -341,7 +344,7 @@ Then('the upstream upgrade preview runs without applying or prompting again', fu
   assert.equal(this.prompts.filter(prompt => prompt.startsWith('Apply Codebase LLM Wiki')).length, 1);
 });
 
-Given('the two curated product guides', function() {
+Given('the three curated product guides', function() {
   assert.deepEqual(PRODUCT_GUIDES.map(guide => guide.productId), PRODUCT_CATALOG.map(product => product.id));
 });
 
@@ -350,7 +353,7 @@ When('I open each guide without an eligible workspace', function(this: Acceptanc
 });
 
 Then('each guide explains its capabilities and shows its Codex keyword and editable templates', function(this: AcceptanceWorld) {
-  assert.equal(this.guideHtml.length, 2);
+  assert.equal(this.guideHtml.length, 3);
   for (const [index, guide] of PRODUCT_GUIDES.entries()) {
     const html = this.guideHtml[index];
     assert.ok(html.includes(guide.keyword));
@@ -397,7 +400,180 @@ Then('an unknown product or template cannot supply clipboard text', async functi
   assert.equal(writeCount, 0);
 });
 
+Given('a valid Megin v0.1.0 release with twelve skills and a local non-Git Group folder', async function(this: AcceptanceWorld) {
+  const root = await this.createRoot();
+  const zip = makeMeginZip('0.1.0');
+  this.latest = meginRelease('v0.1.0', zip);
+  this.client = fakeMeginClient({ 'v0.1.0': zip });
+  assert.equal(await fs.stat(root).then(stat => stat.isDirectory()), true);
+});
+
+When('I request Megin installation and approve the preview', async function(this: AcceptanceWorld) {
+  await installMegin(this.target!, this.latest!, this.client!, this.makeInteraction());
+});
+
+Then('all twelve Megin skill directories and version metadata are installed', async function(this: AcceptanceWorld) {
+  const skillsRoot = path.join(this.target!.root, '.agents', 'skills');
+  assert.deepEqual((await fs.readdir(skillsRoot)).sort(), [...MEGIN_SKILL_DIRECTORIES].sort());
+  for (const directory of MEGIN_SKILL_DIRECTORIES) {
+    assert.match(await fs.readFile(path.join(skillsRoot, directory, 'SKILL.md'), 'utf8'), /0\.1\.0/);
+  }
+  const marker = JSON.parse(await fs.readFile(path.join(this.target!.root, '.agents', 'manage-extensions', 'megin.json'), 'utf8')) as { version: string };
+  this.installedVersion = marker.version;
+  assert.equal(marker.version, '0.1.0');
+  assert.match(this.prompts[0], /\.agents\/manage-extensions\/megin\.json/);
+});
+
+When('I repeat installation of the current Megin release', async function(this: AcceptanceWorld) {
+  await installMegin(this.target!, this.latest!, this.client!, this.makeInteraction());
+});
+
+Then('the installed version is reported without another confirmation', function(this: AcceptanceWorld) {
+  assert.equal(this.installedVersion, '0.1.0');
+  assert.equal(this.prompts.filter(prompt => prompt.startsWith('Install Megin')).length, 1);
+  assert.ok(this.prompts.some(prompt => /already installed/i.test(prompt)));
+});
+
+Given('an older Megin installation and a newer stable release', async function(this: AcceptanceWorld) {
+  await this.createRoot();
+  const oldZip = makeMeginZip('0.1.0');
+  const nextZip = makeMeginZip('0.2.0');
+  const newerZip = makeMeginZip('0.3.0');
+  const packages = { 'v0.1.0': oldZip, 'v0.2.0': nextZip, 'v0.3.0': newerZip };
+  this.client = fakeMeginClient(packages);
+  await installMegin(this.target!, meginRelease('v0.1.0', oldZip), this.client, this.makeInteraction());
+  this.beforeTree = await treeSnapshot(path.join(this.target!.root, '.agents'));
+  this.latest = meginRelease('v0.2.0', nextZip);
+  this.prompts = [];
+});
+
+When('I request a clean Megin update and approve the preview', async function(this: AcceptanceWorld) {
+  await installMegin(this.target!, this.latest!, this.client!, this.makeInteraction());
+});
+
+Then('all Megin skills and metadata update to the new release', async function(this: AcceptanceWorld) {
+  const markerPath = path.join(this.target!.root, '.agents', 'manage-extensions', 'megin.json');
+  const marker = JSON.parse(await fs.readFile(markerPath, 'utf8')) as { version: string };
+  assert.equal(marker.version, '0.2.0');
+  assert.match(await fs.readFile(path.join(this.target!.root, '.agents', 'skills', 'megin', 'SKILL.md'), 'utf8'), /0\.2\.0/);
+});
+
+When('I edit a managed Megin skill and request another update', async function(this: AcceptanceWorld) {
+  const skillPath = path.join(this.target!.root, '.agents', 'skills', 'megin', 'SKILL.md');
+  await fs.writeFile(skillPath, 'local change\n');
+  this.beforeTree = await treeSnapshot(path.join(this.target!.root, '.agents'));
+  this.latest = meginRelease('v0.3.0', makeMeginZip('0.3.0'));
+  this.prompts = [];
+  this.warnings = [];
+  await installMegin(this.target!, this.latest, this.client!, this.makeInteraction());
+});
+
+Then('the modified path is reported and the complete Megin installation stays unchanged', async function(this: AcceptanceWorld) {
+  assert.match(this.warnings.join('\n'), /megin\/SKILL\.md/);
+  assert.deepEqual(await treeSnapshot(path.join(this.target!.root, '.agents')), this.beforeTree);
+  assert.equal(this.prompts.length, 0);
+});
+
+Given('a valid Megin v0.1.0 release and a local Git repository', async function(this: AcceptanceWorld) {
+  const root = await this.createRoot();
+  await runProcess('git', ['init', '--quiet'], { cwd: root });
+  this.target = { ...this.target!, isGitRepo: true };
+  const zip = makeMeginZip('0.1.0');
+  this.latest = meginRelease('v0.1.0', zip);
+  this.client = fakeMeginClient({ 'v0.1.0': zip });
+});
+
+Then('the preview explains Megin expects a non-Git Group root', function(this: AcceptanceWorld) {
+  assert.match(this.prompts.join('\n'), /expects a non-Git Group root/i);
+});
+
+Given('an incomplete Megin skill bundle', async function(this: AcceptanceWorld) {
+  await this.createRoot();
+  const zip = makeMeginZip('0.1.0', { missingSkill: 'megin' });
+  this.latest = meginRelease('v0.1.0', zip);
+  this.client = fakeMeginClient({ 'v0.1.0': zip });
+});
+
+When('I request Megin installation', async function(this: AcceptanceWorld) {
+  await assert.rejects(() => installMegin(this.target!, this.latest!, this.client!, this.makeInteraction()), error => {
+    this.errors.push(error instanceof Error ? error.message : String(error));
+    return /missing.*SKILL\.md/i.test(error instanceof Error ? error.message : String(error));
+  });
+});
+
+Then('the missing skill is reported and the workspace remains unchanged', async function(this: AcceptanceWorld) {
+  assert.match(this.errors.join('\n'), /SKILL\.md/i);
+  await assert.rejects(() => fs.stat(path.join(this.target!.root, '.agents')));
+});
+
+Given('two trusted local folders are open for Megin', async function(this: AcceptanceWorld) {
+  const gitRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'manage-ext-megin-multi-git-'));
+  const plainRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'manage-ext-megin-multi-plain-'));
+  this.extraRoots.push(gitRoot, plainRoot);
+  await runProcess('git', ['init', '--quiet'], { cwd: gitRoot });
+  this.candidates = [{ name: 'repo', fsPath: gitRoot, scheme: 'file' }, { name: 'group', fsPath: plainRoot, scheme: 'file' }];
+});
+
+When('I choose the non-Git folder as the Megin target', async function(this: AcceptanceWorld) {
+  this.target = await resolveMeginInstallTarget({ platform: 'win32', trusted: true, forceSelection: true, candidates: this.candidates }, async targets => targets.find(target => target.name === 'group'), runProcess, async () => true);
+});
+
+Then('the selected folder is the only Megin target and no files are written yet', async function(this: AcceptanceWorld) {
+  assert.equal(this.target?.name, 'group');
+  assert.equal(await fs.realpath(this.target!.root), await fs.realpath(this.candidates[1].fsPath));
+  await assert.rejects(() => fs.stat(path.join(this.target!.root, '.agents')));
+});
+
+Given('the Megin guide is open', function() {
+  assert.ok(getProductGuide('megin'));
+});
+
+When('I edit a Megin template and copy it', async function(this: AcceptanceWorld) {
+  const guide = getProductGuide('megin')!;
+  this.editedTemplate = '$megin-code-review review current changes\nInclude security and regression risks.';
+  await copyGuideRequest(guide, {
+    action: 'copy-template', productId: guide.productId, featureId: 'review-changes', text: this.editedTemplate
+  }, async text => { this.copiedText = text; });
+});
+
+Then('the exact Megin template is copied', function(this: AcceptanceWorld) {
+  assert.equal(this.copiedText, this.editedTemplate);
+});
+
+When('a Megin replacement step fails', async function(this: AcceptanceWorld) {
+  const zip = makeMeginZip('0.2.0');
+  this.latest = meginRelease('v0.2.0', zip);
+  let payloadMoves = 0;
+  let failed = false;
+  const operations = {
+    async rename(from: string, to: string) {
+      if (from.includes(`${path.sep}payload${path.sep}`) && !failed && ++payloadMoves === 5) {
+        failed = true;
+        throw new Error('simulated replacement failure');
+      }
+      await fs.rename(from, to);
+    }
+  };
+  await assert.rejects(() => installMegin(this.target!, this.latest!, this.client!, this.makeInteraction(), undefined, operations), error => {
+    this.errors.push(error instanceof Error ? error.message : String(error));
+    return /simulated replacement failure/i.test(error instanceof Error ? error.message : String(error));
+  });
+  assert.equal(failed, true);
+});
+
+Then('every old skill and the old version metadata are restored', async function(this: AcceptanceWorld) {
+  assert.match(this.errors.join('\n'), /simulated replacement failure/);
+  assert.deepEqual(await treeSnapshot(path.join(this.target!.root, '.agents')), this.beforeTree);
+});
+
 function release(tag: string): GitHubRelease { return { tag_name: tag, prerelease: false, draft: false, assets: [] }; }
+
+function meginRelease(tag: string, zip: Buffer): GitHubRelease {
+  return {
+    tag_name: tag, prerelease: false, draft: false,
+    assets: [{ name: 'megin-skills.zip', browser_download_url: `https://github.com/dennis8499/Megin/releases/download/${tag}/megin-skills.zip`, digest: `sha256:${createHash('sha256').update(zip).digest('hex')}`, size: zip.length }]
+  };
+}
 
 function fakeSkillClient(packages: Record<string, Buffer>): GitHubReleaseClient {
   return {
@@ -405,6 +581,21 @@ function fakeSkillClient(packages: Record<string, Buffer>): GitHubReleaseClient 
     async downloadProductArchive(_id: string, version: GitHubRelease) {
       const archive = packages[version.tag_name];
       if (!archive) throw new Error(`Missing fixture asset ${version.tag_name}`);
+      return archive;
+    }
+  } as unknown as GitHubReleaseClient;
+}
+
+function fakeMeginClient(packages: Record<string, Buffer>): GitHubReleaseClient {
+  return {
+    async getByTag(_repository: string, tag: string) {
+      const archive = packages[tag];
+      if (!archive) throw new Error(`Missing Megin fixture asset ${tag}`);
+      return meginRelease(tag, archive);
+    },
+    async downloadProductArchive(_id: string, version: GitHubRelease) {
+      const archive = packages[version.tag_name];
+      if (!archive) throw new Error(`Missing Megin fixture asset ${version.tag_name}`);
       return archive;
     }
   } as unknown as GitHubReleaseClient;

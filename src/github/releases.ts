@@ -53,6 +53,13 @@ export function selectMergeReviewerAsset(release: GitHubRelease): ReleaseAsset |
   return product ? release.assets.find(asset => asset.name === product.archiveAssetName(version)) : undefined;
 }
 
+export function selectMeginAsset(release: GitHubRelease): ReleaseAsset | undefined {
+  const version = parseStableVersionTag(release.tag_name);
+  if (!version) return undefined;
+  const product = PRODUCT_CATALOG.find(candidate => candidate.id === 'megin');
+  return product ? release.assets.find(asset => asset.name === product.archiveAssetName(version)) : undefined;
+}
+
 export function validateSha256(value: unknown): string {
   if (typeof value !== 'string') throw new ReleaseLookupError('Release asset is missing its SHA-256 digest.');
   const candidate = value.startsWith('sha256:') ? value.slice(7) : value;
@@ -156,6 +163,11 @@ export class GitHubReleaseClient {
     const product = PRODUCT_CATALOG.find(candidate => candidate.id === id);
     if (!product) throw new ReleaseLookupError(`Product ${id} is not in the curated catalog.`);
     if (product.kind === 'wiki') return (await this.downloadWikiAssets(release)).zip;
+    if (product.kind === 'skill-bundle') {
+      const asset = selectMeginAsset(release);
+      if (!asset) throw new ReleaseLookupError('Megin release is missing megin-skills.zip.');
+      return this.downloadAsset(asset);
+    }
     const asset = selectMergeReviewerAsset(release);
     if (!asset) throw new ReleaseLookupError('MergeReviewer release is missing its versioned ZIP asset.');
     return this.downloadAsset(asset);

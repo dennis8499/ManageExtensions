@@ -3,11 +3,12 @@ import path from 'node:path';
 import { promises as fs } from 'node:fs';
 import { getProduct, PRODUCT_CATALOG, type ProductDefinition } from './catalog';
 import { installMergeReviewer } from './adapters/mergeReviewerInstaller';
+import { installMegin, readMeginInstalledVersion } from './adapters/meginInstaller';
 import { type InstallInteraction } from './adapters/interaction';
 import { installWiki } from './adapters/wikiInstaller';
 import { GitHubReleaseClient, type GitHubRelease } from './github/releases';
 import { compareVersions, parseStableVersionTag } from './version';
-import { eligibleGitWorkspace, resolveInstallTarget, type InstallTarget, type WorkspaceCandidate } from './workspace/target';
+import { eligibleLocalWorkspace, resolveInstallTarget, resolveMeginInstallTarget, type InstallTarget, type WorkspaceCandidate } from './workspace/target';
 import { copyProductKeyword, ProductGuideView } from './productGuideView';
 
 const CHECK_CACHE_KEY = 'manageExtensions.releaseChecks';
@@ -40,9 +41,10 @@ class ProductProvider implements vscode.TreeDataProvider<ProductTreeItem> {
   getTreeItem(item: ProductTreeItem): vscode.TreeItem { return item; }
 
   async getChildren(): Promise<ProductTreeItem[]> {
-    const target = await this.resolveDisplayTarget();
+    const { gitTarget, meginTarget } = await this.resolveDisplayTargets();
     const checks = this.context.globalState.get<Record<string, ReleaseCheck>>(CHECK_CACHE_KEY, {});
     const products = await Promise.all(PRODUCT_CATALOG.map(async product => {
+      const target = product.kind === 'skill-bundle' ? meginTarget : gitTarget;
       const item = new ProductTreeItem(product.id);
       item.label = product.title;
       item.command = { command: 'manageExtensions.showDetails', title: '查看功能與模板', arguments: [product.id] };
@@ -65,7 +67,7 @@ class ProductProvider implements vscode.TreeDataProvider<ProductTreeItem> {
         item.description = process.platform !== 'win32' ? 'Windows required' : 'Trust a workspace to install';
         item.contextValue = 'manageExtensions.product.unavailable';
       } else {
-        item.description = 'Select a local Git repository to show status';
+        item.description = product.kind === 'skill-bundle' ? 'Open a local folder to show status' : 'Select a local Git repository to show status';
         item.contextValue = 'manageExtensions.product.unavailable';
       }
       if (!check && !item.description) item.description = 'Release status not checked';
@@ -74,8 +76,8 @@ class ProductProvider implements vscode.TreeDataProvider<ProductTreeItem> {
     return products;
   }
 
-  private async resolveDisplayTarget(): Promise<InstallTarget | undefined> {
-    if (!isWindowsTrusted()) return undefined;
+  private async resolveDisplayTargets(): Promise<{ gitTarget?: InstallTarget; meginTarget?: InstallTarget }> {
+    if (!isWindowsTrusted()) return {};
     const folders = vscode.workspace.workspaceFolders ?? [];
     let folder: vscode.WorkspaceFolder | undefined;
     if (folders.length === 1) folder = folders[0];
@@ -83,9 +85,14 @@ class ProductProvider implements vscode.TreeDataProvider<ProductTreeItem> {
       const active = vscode.window.activeTextEditor?.document.uri;
       if (active) folder = vscode.workspace.getWorkspaceFolder(active);
     }
-    if (!folder) return undefined;
+    if (!folder) return {};
     const candidate = candidateFromFolder(folder);
-    return candidate ? eligibleGitWorkspace(candidate) : undefined;
+    const local = candidate ? await eligibleLocalWorkspace(candidate) : undefined;
+    if (!local) return {};
+    const gitTarget = local.repositoryRoot && path.win32.normalize(local.root).toLocaleLowerCase('en-US') === path.win32.normalize(local.repositoryRoot).toLocaleLowerCase('en-US')
+      ? { name: local.name, root: local.repositoryRoot, isGitRepo: true }
+      : undefined;
+    return { gitTarget, meginTarget: local };
   }
 }
 
@@ -140,11 +147,12 @@ async function runInstallCommand(context: vscode.ExtensionContext, client: GitHu
   const product = productFromArgument(argument) ?? await selectProduct();
   if (!product) return;
   try {
-    const target = await selectTarget();
+    const target = await selectTarget(product);
     const release = await client.getLatest(product.repository);
     await storeRelease(context, product, release);
     const interaction = vscodeInteraction();
     if (product.kind === 'wiki') await installWiki(target, release, client, interaction);
+    else if (product.kind === 'skill-bundle') await installMegin(target, release, client, interaction);
     else await installMergeReviewer(target, release, client, interaction);
     provider.refresh();
     await context.globalState.update('manageExtensions.lastTarget', target.root);
@@ -153,16 +161,21 @@ async function runInstallCommand(context: vscode.ExtensionContext, client: GitHu
   }
 }
 
-async function selectTarget(): Promise<InstallTarget> {
+async function selectTarget(product: ProductDefinition): Promise<InstallTarget> {
   const folders = vscode.workspace.workspaceFolders ?? [];
   const candidates = folders.flatMap(folder => {
     const candidate = candidateFromFolder(folder);
     return candidate ? [candidate] : [];
   });
-  return resolveInstallTarget({ platform: process.platform, trusted: vscode.workspace.isTrusted, candidates, forceSelection: folders.length > 1 }, async targets => {
-    const choices = targets.map(target => ({ label: target.name, description: target.root, target }));
-    return (await vscode.window.showQuickPick(choices, { placeHolder: 'Choose the local Git repository to install into' }))?.target;
-  });
+  const environment = { platform: process.platform, trusted: vscode.workspace.isTrusted, candidates, forceSelection: folders.length > 1 };
+  const choose = async (targets: readonly InstallTarget[]) => {
+    const choices = targets.map(target => ({ label: target.name, description: `${target.root}${target.isGitRepo ? ' (Git repository)' : ''}`, target }));
+    const placeHolder = product.kind === 'skill-bundle' ? 'Choose the local folder to install Megin skills into' : 'Choose the local Git repository to install into';
+    return (await vscode.window.showQuickPick(choices, { placeHolder }))?.target;
+  };
+  return product.kind === 'skill-bundle'
+    ? resolveMeginInstallTarget(environment, choose)
+    : resolveInstallTarget(environment, choose);
 }
 
 function candidateFromFolder(folder: vscode.WorkspaceFolder): WorkspaceCandidate | undefined {
@@ -221,6 +234,7 @@ async function storeRelease(context: vscode.ExtensionContext, product: ProductDe
 }
 
 async function readInstalledVersion(root: string, product: ProductDefinition): Promise<string | undefined> {
+  if (product.kind === 'skill-bundle') return readMeginInstalledVersion(root);
   let file = root;
   const parts = [...product.installRelativePath.split(/[\\/]/), 'VERSION'];
   for (let index = 0; index < parts.length; index++) {

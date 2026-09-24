@@ -18,6 +18,8 @@ export interface TargetEnvironment {
 export interface InstallTarget {
   readonly name: string;
   readonly root: string;
+  readonly isGitRepo?: boolean;
+  readonly repositoryRoot?: string;
 }
 
 export type ProcessRunner = (executable: string, args: readonly string[], options?: ProcessOptions) => Promise<ProcessResult>;
@@ -45,6 +47,16 @@ export async function eligibleGitWorkspace(
   runner: ProcessRunner = runProcess,
   localDriveChecker: LocalDriveChecker = isLocalWindowsDrive
 ): Promise<InstallTarget | undefined> {
+  const local = await eligibleLocalWorkspace(candidate, runner, localDriveChecker);
+  if (!local?.repositoryRoot || path.win32.normalize(local.root).toLocaleLowerCase('en-US') !== path.win32.normalize(local.repositoryRoot).toLocaleLowerCase('en-US')) return undefined;
+  return { ...local, root: local.repositoryRoot, isGitRepo: true };
+}
+
+export async function eligibleLocalWorkspace(
+  candidate: WorkspaceCandidate,
+  runner: ProcessRunner = runProcess,
+  localDriveChecker: LocalDriveChecker = isLocalWindowsDrive
+): Promise<InstallTarget | undefined> {
   if (candidate.scheme !== 'file' || !path.win32.isAbsolute(candidate.fsPath) || candidate.fsPath.startsWith('\\\\')) return undefined;
   try {
     const root = await fs.realpath(candidate.fsPath);
@@ -52,11 +64,13 @@ export async function eligibleGitWorkspace(
     if (!await localDriveChecker(path.win32.parse(root).root, runner)) return undefined;
     const stats = await fs.stat(root);
     if (!stats.isDirectory()) return undefined;
-    const git = await runner('git', ['rev-parse', '--show-toplevel'], { cwd: root });
-    if (git.exitCode !== 0) return undefined;
-    const gitRoot = await fs.realpath(git.stdout.trim());
-    if (path.win32.normalize(root).toLocaleLowerCase('en-US') !== path.win32.normalize(gitRoot).toLocaleLowerCase('en-US')) return undefined;
-    return { name: candidate.name, root: gitRoot };
+    let repositoryRoot: string | undefined;
+    try {
+      const git = await runner('git', ['rev-parse', '--show-toplevel'], { cwd: root });
+      if (git.exitCode === 0) repositoryRoot = await fs.realpath(git.stdout.trim());
+    }
+    catch { /* Non-Git folders are supported for Megin. */ }
+    return { name: candidate.name, root, isGitRepo: repositoryRoot !== undefined, repositoryRoot };
   } catch {
     return undefined;
   }
@@ -76,5 +90,22 @@ export async function resolveInstallTarget(
   if (!environment.forceSelection && environment.candidates.length <= 1 && targets.length === 1) return targets[0];
   const selected = await choose(targets);
   if (!selected || !targets.some(target => target.root === selected.root)) throw new Error('Choose a repository before installing.');
+  return selected;
+}
+
+export async function resolveMeginInstallTarget(
+  environment: TargetEnvironment,
+  choose: (targets: readonly InstallTarget[]) => Promise<InstallTarget | undefined>,
+  runner: ProcessRunner = runProcess,
+  localDriveChecker: LocalDriveChecker = isLocalWindowsDrive
+): Promise<InstallTarget> {
+  if (environment.platform !== 'win32') throw new Error('Megin skill installation is supported on Windows only.');
+  if (!environment.trusted) throw new Error('Trust this VS Code workspace before installing Megin skills.');
+  const targets = (await Promise.all(environment.candidates.map(candidate => eligibleLocalWorkspace(candidate, runner, localDriveChecker))))
+    .filter((target): target is InstallTarget => target !== undefined);
+  if (targets.length === 0) throw new Error('Open a local Windows folder before installing Megin skills.');
+  if (!environment.forceSelection && environment.candidates.length <= 1 && targets.length === 1) return targets[0];
+  const selected = await choose(targets);
+  if (!selected || !targets.some(target => target.root === selected.root)) throw new Error('Choose a local workspace folder before installing Megin skills.');
   return selected;
 }

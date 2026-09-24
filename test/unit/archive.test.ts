@@ -3,8 +3,8 @@ import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { extractReleaseArchive, safeArchivePath, validateArchiveEntry } from '../../src/archive/secureArchive';
-import { makeSkillZip, makeZip } from '../helpers/zip';
+import { extractMeginSkillsArchive, extractReleaseArchive, safeArchivePath, validateArchiveEntry } from '../../src/archive/secureArchive';
+import { makeMeginZip, makeSkillZip, makeZip, MEGIN_SKILL_DIRECTORIES } from '../helpers/zip';
 
 test('accepts package members and strips only the expected archive root', () => {
   assert.equal(safeArchivePath('merge-reviewer/SKILL.md', 'merge-reviewer'), 'SKILL.md');
@@ -42,5 +42,26 @@ test('extracts a verified release ZIP and rejects corrupt, duplicate, and symlin
     await assert.rejects(() => extractReleaseArchive(symlink, parent, 'merge-reviewer', '1.2.3', 'skill'), /symlink|special file/i);
     const traversal = makeZip([{ name: 'merge-reviewer/../escape.txt', data: 'outside' }]);
     await assert.rejects(() => extractReleaseArchive(traversal, parent, 'merge-reviewer', '1.2.3', 'skill'), /unsafe ZIP path|invalid relative path/i);
+  } finally { await fs.rm(parent, { recursive: true, force: true }); }
+});
+
+test('validates the rootless Megin bundle as exactly twelve safe skills without VERSION files', async () => {
+  const parent = await fs.mkdtemp(path.join(os.tmpdir(), 'manage-ext-megin-archive-'));
+  try {
+    const extracted = await extractMeginSkillsArchive(makeMeginZip('0.1.0'), parent, '0.1.0');
+    const extractedRoot = await fs.readdir(extracted.packageDirectory);
+    assert.deepEqual(extractedRoot.filter(entry => entry !== 'README.md').sort(), [...MEGIN_SKILL_DIRECTORIES].sort());
+    assert.equal(await fs.readFile(path.join(extracted.packageDirectory, 'README.md'), 'utf8'), '# Megin skills\n');
+    for (const directory of MEGIN_SKILL_DIRECTORIES) {
+      assert.equal(await fs.readFile(path.join(extracted.packageDirectory, directory, 'SKILL.md'), 'utf8'), `# ${directory} 0.1.0\n`);
+      await assert.rejects(() => fs.stat(path.join(extracted.packageDirectory, directory, 'VERSION')));
+    }
+    await fs.rm(extracted.temporaryDirectory, { recursive: true, force: true });
+    await assert.rejects(() => extractMeginSkillsArchive(makeMeginZip('0.1.0', { missingSkill: MEGIN_SKILL_DIRECTORIES[0] }), parent, '0.1.0'), /missing.*SKILL\.md/i);
+    await assert.rejects(() => extractMeginSkillsArchive(makeMeginZip('0.1.0', { extraPath: 'megin-unknown/SKILL.md' }), parent, '0.1.0'), /unexpected.*path|skill directory/i);
+    const traversal = makeZip([{ name: '../outside.txt', data: 'bad' }]);
+    await assert.rejects(() => extractMeginSkillsArchive(traversal, parent, '0.1.0'), /unsafe ZIP path|unexpected|traversal|invalid relative path/i);
+    const symlink = makeZip([{ name: 'megin/SKILL.md', data: 'link', mode: 0o120777 }]);
+    await assert.rejects(() => extractMeginSkillsArchive(symlink, parent, '0.1.0'), /symlink|special file/i);
   } finally { await fs.rm(parent, { recursive: true, force: true }); }
 });

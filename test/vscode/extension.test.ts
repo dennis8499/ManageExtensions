@@ -26,6 +26,10 @@ suite('ManageExtensions VS Code host', () => {
     assert.equal(await vscode.env.clipboard.readText(), '$merge-reviewer');
     await vscode.commands.executeCommand('manageExtensions.showDetails', 'codebase-llm-wiki');
     await waitForTab('Codebase LLM Wiki');
+    await vscode.commands.executeCommand('manageExtensions.showDetails', 'megin');
+    await waitForTab('Megin');
+    await vscode.commands.executeCommand('manageExtensions.copyKeyword', 'megin');
+    assert.equal(await vscode.env.clipboard.readText(), '$megin');
   });
 
   test('copies an edited webview template exactly and rejects an unknown template', async () => {

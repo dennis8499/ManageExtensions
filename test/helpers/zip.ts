@@ -61,6 +61,35 @@ export function makeSkillZip(version: string, files: Record<string, string> = {}
   ]);
 }
 
+export const MEGIN_SKILL_DIRECTORIES = [
+  'megin',
+  'megin-behavior-contract',
+  'megin-bug-diagnosis',
+  'megin-code-review',
+  'megin-finishing-delivery',
+  'megin-human-acceptance',
+  'megin-implementation-execution',
+  'megin-project-knowledge',
+  'megin-requirements-discovery',
+  'megin-technical-planning',
+  'megin-test-driven-development',
+  'megin-verification-before-completion'
+] as const;
+
+export function makeMeginZip(version: string, options: { missingSkill?: string; extraPath?: string; edit?: string } = {}): Buffer {
+  const members: Member[] = [{ name: 'README.md', data: '# Megin skills\n' }];
+  for (const directory of MEGIN_SKILL_DIRECTORIES) {
+    if (directory === options.missingSkill) {
+      members.push({ name: `${directory}/`, data: '', mode: 0o40755 });
+      continue;
+    }
+    members.push({ name: `${directory}/SKILL.md`, data: `# ${directory} ${options.edit ?? version}\n` });
+    members.push({ name: `${directory}/examples/example.md`, data: `Release ${version}\n` });
+  }
+  if (options.extraPath) members.push({ name: options.extraPath, data: 'unexpected\n' });
+  return makeZip(members);
+}
+
 export function makeWikiZip(version: string): Buffer {
   return makeZip([
     { name: `codebase-llm-wiki-codex-${version}/VERSION`, data: version },
