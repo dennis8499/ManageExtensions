@@ -38,3 +38,14 @@ test('guide content is escaped before insertion into the webview', () => {
   assert.ok(html.includes('&lt;/textarea&gt;&lt;script&gt;'));
   assert.ok(!html.includes('<script>alert("bad")</script>'));
 });
+
+test('Megin guide contains the copied keyword, editable skill examples, and release action', () => {
+  const guide = getProductGuide('megin')!;
+  const html = renderProductGuideHtml(guide, 'megin-nonce');
+  assert.ok(html.includes('$megin'));
+  assert.ok(html.includes('$megin-code-review'));
+  assert.ok(html.includes('data-action="copy-keyword"'));
+  assert.ok(html.includes('data-action="copy-template"'));
+  assert.ok(html.includes('data-action="open-release"'));
+  assert.ok(html.includes('data-action="install"'));
+});

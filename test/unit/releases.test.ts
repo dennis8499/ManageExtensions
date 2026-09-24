@@ -5,12 +5,13 @@ import {
   GitHubReleaseClient,
   ReleaseLookupError,
   selectLatestStableRelease,
+  selectMeginAsset,
   selectMergeReviewerAsset,
   selectWikiManifestAsset,
   validateSha256,
   validateWikiManifest
 } from '../../src/github/releases';
-import { makeWikiZip } from '../helpers/zip';
+import { makeMeginZip, makeWikiZip } from '../helpers/zip';
 
 const sha = 'a'.repeat(64);
 
@@ -36,6 +37,22 @@ test('finds exact release assets and validates SHA-256 metadata', () => {
   assert.equal(selectWikiManifestAsset(release)?.name, 'update-manifest.json');
   assert.equal(selectMergeReviewerAsset(release)?.name, 'merge-reviewer-1.2.3.zip');
   assert.throws(() => validateSha256(`sha256:${'z'.repeat(64)}`), /SHA-256/i);
+});
+
+test('selects only the Megin release bundle and verifies GitHub SHA-256 before returning it', async () => {
+  const zip = makeMeginZip('0.1.0');
+  const digest = createHash('sha256').update(zip).digest('hex');
+  const url = 'https://github.com/dennis8499/Megin/releases/download/v0.1.0/megin-skills.zip';
+  const release = {
+    tag_name: 'v0.1.0', prerelease: false, draft: false,
+    assets: [{ name: 'megin-skills.zip', browser_download_url: url, digest: `sha256:${digest}`, size: zip.length }]
+  };
+  assert.equal(selectMeginAsset(release)?.name, 'megin-skills.zip');
+  const client = new GitHubReleaseClient(async () => new Response(zip, { status: 200, headers: { 'content-length': String(zip.length) } }));
+  assert.deepEqual(await client.downloadProductArchive('megin', release), zip);
+  assert.equal(selectMeginAsset({ ...release, assets: [{ ...release.assets[0], name: 'other.zip' }] }), undefined);
+  const badDigest = { ...release, assets: [{ ...release.assets[0], digest: `sha256:${'0'.repeat(64)}` }] };
+  await assert.rejects(() => client.downloadProductArchive('megin', badDigest), /SHA-256 mismatch/i);
 });
 
 test('uses GitHub API safely and reports HTTP errors', async () => {

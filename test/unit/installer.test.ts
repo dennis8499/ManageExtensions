@@ -1,14 +1,16 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { installMergeReviewer } from '../../src/adapters/mergeReviewerInstaller';
+import { installMegin, readMeginInstalledVersion } from '../../src/adapters/meginInstaller';
 import { installWiki } from '../../src/adapters/wikiInstaller';
 import { GitHubReleaseClient, type GitHubRelease } from '../../src/github/releases';
 import type { InstallInteraction } from '../../src/adapters/interaction';
 import type { ProcessResult, PythonCommand } from '../../src/process';
-import { makeSkillZip, makeWikiZip } from '../helpers/zip';
+import { makeMeginZip, makeSkillZip, makeWikiZip, MEGIN_SKILL_DIRECTORIES } from '../helpers/zip';
 
 test('installs MergeReviewer, is repeat-safe, and upgrades clean managed content', async () => {
   const sandbox = await fs.mkdtemp(path.join(os.tmpdir(), 'manage-ext-test-'));
@@ -190,6 +192,104 @@ test('Wiki upstream conflicts are shown and never followed by an apply call', as
   } finally { await fs.rm(sandbox, { recursive: true, force: true }); }
 });
 
+test('installs all Megin skills with version metadata, Git-root warning, and repeat-safe status', async () => {
+  const sandbox = await fs.mkdtemp(path.join(os.tmpdir(), 'manage-ext-megin-'));
+  const packages = { 'v0.1.0': makeMeginZip('0.1.0') };
+  const prompts: string[] = [];
+  const warnings: string[] = [];
+  const informs: string[] = [];
+  const interaction = makeInteraction(prompts, warnings);
+  const wrapped: InstallInteraction = { ...interaction, async inform(message) { informs.push(message); } };
+  try {
+    await installMegin({ name: 'repo', root: sandbox, isGitRepo: true }, makeMeginRelease('v0.1.0', packages['v0.1.0']), makeMeginClient(packages), wrapped);
+    const skillsRoot = path.join(sandbox, '.agents', 'skills');
+    assert.deepEqual((await fs.readdir(skillsRoot)).sort(), [...MEGIN_SKILL_DIRECTORIES].sort());
+    for (const directory of MEGIN_SKILL_DIRECTORIES) assert.match(await fs.readFile(path.join(skillsRoot, directory, 'SKILL.md'), 'utf8'), /0\.1\.0/);
+    const markerPath = path.join(sandbox, '.agents', 'manage-extensions', 'megin.json');
+    const marker = JSON.parse(await fs.readFile(markerPath, 'utf8')) as { version: string; tag: string; assetSha256: string; managedDirectories: string[] };
+    assert.equal(marker.version, '0.1.0');
+    assert.equal(marker.tag, 'v0.1.0');
+    assert.equal(marker.assetSha256, createHash('sha256').update(packages['v0.1.0']).digest('hex'));
+    assert.deepEqual(marker.managedDirectories, [...MEGIN_SKILL_DIRECTORIES]);
+    assert.equal(await readMeginInstalledVersion(sandbox), '0.1.0');
+    assert.match(prompts[0], /non-Git|Git repository/i);
+    assert.match(prompts[0], /\.agents\/skills\/megin\/SKILL\.md/);
+    assert.match(prompts[0], /\.agents\/manage-extensions\/megin\.json/);
+    assert.equal(warnings.length, 0);
+    await installMegin({ name: 'repo', root: sandbox, isGitRepo: true }, makeMeginRelease('v0.1.0', packages['v0.1.0']), makeMeginClient(packages), wrapped);
+    assert.equal(prompts.length, 1);
+    assert.match(informs.at(-1) ?? '', /already installed/i);
+  } finally { await fs.rm(sandbox, { recursive: true, force: true }); }
+});
+
+test('updates clean Megin content but blocks edits, extra files, and unmanaged skill directories', async () => {
+  const sandbox = await fs.mkdtemp(path.join(os.tmpdir(), 'manage-ext-megin-'));
+  const packages = { 'v0.1.0': makeMeginZip('0.1.0'), 'v0.2.0': makeMeginZip('0.2.0') };
+  const warnings: string[] = [];
+  const prompts: string[] = [];
+  const client = makeMeginClient(packages);
+  try {
+    await installMegin({ name: 'group', root: sandbox }, makeMeginRelease('v0.1.0', packages['v0.1.0']), client, makeInteraction(prompts, warnings));
+    await installMegin({ name: 'group', root: sandbox }, makeMeginRelease('v0.2.0', packages['v0.2.0']), client, makeInteraction(prompts, warnings));
+    assert.match(await fs.readFile(path.join(sandbox, '.agents', 'skills', 'megin', 'SKILL.md'), 'utf8'), /0\.2\.0/);
+    assert.match(prompts[1], /\.agents\/skills\/megin\/SKILL\.md/);
+    assert.match(prompts[1], /\.agents\/manage-extensions\/megin\.json/);
+    const marker = JSON.parse(await fs.readFile(path.join(sandbox, '.agents', 'manage-extensions', 'megin.json'), 'utf8')) as { version: string };
+    assert.equal(marker.version, '0.2.0');
+    assert.equal(warnings.length, 0);
+
+    const edited = path.join(sandbox, '.agents', 'skills', 'megin', 'SKILL.md');
+    await fs.writeFile(edited, 'local edit\n');
+    await fs.writeFile(path.join(sandbox, '.agents', 'skills', 'megin', 'notes.txt'), 'manual file\n');
+    const before = await fullSnapshot(path.join(sandbox, '.agents', 'skills'));
+    await installMegin({ name: 'group', root: sandbox }, makeMeginRelease('v0.3.0', makeMeginZip('0.3.0')), makeMeginClient({ 'v0.3.0': makeMeginZip('0.3.0'), 'v0.2.0': packages['v0.2.0'] }), makeInteraction(prompts, warnings));
+    assert.deepEqual(await fullSnapshot(path.join(sandbox, '.agents', 'skills')), before);
+    assert.match(warnings.at(-1) ?? '', /megin\/SKILL\.md/);
+    assert.match(warnings.at(-1) ?? '', /notes\.txt/);
+
+    const unmanaged = await fs.mkdtemp(path.join(os.tmpdir(), 'manage-ext-megin-unmanaged-'));
+    try {
+      await fs.mkdir(path.join(unmanaged, '.agents', 'skills', 'megin-code-review'), { recursive: true });
+      await fs.writeFile(path.join(unmanaged, '.agents', 'skills', 'megin-code-review', 'SKILL.md'), 'local skill\n');
+      const unmanagedBefore = await fullSnapshot(path.join(unmanaged, '.agents', 'skills'));
+      await installMegin({ name: 'group', root: unmanaged }, makeMeginRelease('v0.1.0', packages['v0.1.0']), client, makeInteraction([], warnings));
+      assert.deepEqual(await fullSnapshot(path.join(unmanaged, '.agents', 'skills')), unmanagedBefore);
+      assert.match(warnings.at(-1) ?? '', /unmanaged|already exists/i);
+    } finally { await fs.rm(unmanaged, { recursive: true, force: true }); }
+  } finally { await fs.rm(sandbox, { recursive: true, force: true }); }
+});
+
+test('rolls back all Megin skill directories and version metadata when a staged rename fails', async () => {
+  const sandbox = await fs.mkdtemp(path.join(os.tmpdir(), 'manage-ext-megin-rollback-'));
+  const packages = { 'v0.1.0': makeMeginZip('0.1.0'), 'v0.2.0': makeMeginZip('0.2.0') };
+  const client = makeMeginClient(packages);
+  try {
+    await installMegin({ name: 'group', root: sandbox }, makeMeginRelease('v0.1.0', packages['v0.1.0']), client, makeInteraction());
+    const beforeSkills = await fullSnapshot(path.join(sandbox, '.agents', 'skills'));
+    const markerPath = path.join(sandbox, '.agents', 'manage-extensions', 'megin.json');
+    const beforeMarker = await fs.readFile(markerPath, 'utf8');
+    let replacementMoves = 0;
+    let failed = false;
+    const ops = { async rename(from: string, to: string) {
+      if (from.includes(`${path.sep}payload${path.sep}`) && !failed && ++replacementMoves === 5) { failed = true; throw new Error('simulated rename failure'); }
+      await fs.rename(from, to);
+    } };
+    await assert.rejects(() => installMegin({ name: 'group', root: sandbox }, makeMeginRelease('v0.2.0', packages['v0.2.0']), client, makeInteraction(), undefined, ops), /simulated rename failure/);
+    assert.equal(failed, true);
+    assert.deepEqual(await fullSnapshot(path.join(sandbox, '.agents', 'skills')), beforeSkills);
+    assert.equal(await fs.readFile(markerPath, 'utf8'), beforeMarker);
+  } finally { await fs.rm(sandbox, { recursive: true, force: true }); }
+});
+
+test('rejects an invalid Megin archive before creating target files', async () => {
+  const sandbox = await fs.mkdtemp(path.join(os.tmpdir(), 'manage-ext-megin-'));
+  const invalid = makeMeginZip('0.1.0', { missingSkill: MEGIN_SKILL_DIRECTORIES[0] });
+  try {
+    await assert.rejects(() => installMegin({ name: 'group', root: sandbox }, makeMeginRelease('v0.1.0', invalid), makeMeginClient({ 'v0.1.0': invalid }), makeInteraction()), /missing.*SKILL\.md/i);
+    await assert.rejects(() => fs.stat(path.join(sandbox, '.agents')));
+  } finally { await fs.rm(sandbox, { recursive: true, force: true }); }
+});
+
 function fakeReleaseClient(packages: Record<string, Buffer>): GitHubReleaseClient {
   return {
     async getByTag(_repository: string, tag: string) { return makeRelease(tag); },
@@ -202,6 +302,28 @@ function fakeReleaseClient(packages: Record<string, Buffer>): GitHubReleaseClien
 }
 
 function makeRelease(tag: string): GitHubRelease { return { tag_name: tag, prerelease: false, draft: false, assets: [] }; }
+
+function makeMeginRelease(tag: string, zip: Buffer): GitHubRelease {
+  return {
+    tag_name: tag, prerelease: false, draft: false,
+    assets: [{ name: 'megin-skills.zip', browser_download_url: `https://github.com/dennis8499/Megin/releases/download/${tag}/megin-skills.zip`, digest: `sha256:${createHash('sha256').update(zip).digest('hex')}`, size: zip.length }]
+  };
+}
+
+function makeMeginClient(packages: Record<string, Buffer>): GitHubReleaseClient {
+  return {
+    async getByTag(_repository: string, tag: string) {
+      const archive = packages[tag];
+      if (!archive) throw new Error(`No Megin fixture for ${tag}`);
+      return makeMeginRelease(tag, archive);
+    },
+    async downloadProductArchive(_id: string, release: GitHubRelease) {
+      const archive = packages[release.tag_name];
+      if (!archive) throw new Error(`No Megin fixture for ${release.tag_name}`);
+      return archive;
+    }
+  } as unknown as GitHubReleaseClient;
+}
 
 function makeInteraction(prompts: string[] = [], warnings: string[] = []): InstallInteraction {
   return {
@@ -218,5 +340,19 @@ async function snapshot(root: string): Promise<Record<string, string>> {
     const stat = await fs.lstat(fullPath);
     if (stat.isFile()) result[name] = await fs.readFile(fullPath, 'utf8');
   }
+  return result;
+}
+
+async function fullSnapshot(root: string): Promise<Record<string, string>> {
+  const result: Record<string, string> = {};
+  async function visit(directory: string, prefix: string): Promise<void> {
+    for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
+      const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+      const full = path.join(directory, entry.name);
+      if (entry.isDirectory()) await visit(full, relative);
+      else result[relative] = await fs.readFile(full, 'utf8');
+    }
+  }
+  await visit(root, '');
   return result;
 }

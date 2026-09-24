@@ -22,12 +22,42 @@ export interface ExtractedPackage {
   readonly version: string;
 }
 
+export const MEGIN_SKILL_DIRECTORIES = Object.freeze([
+  'megin',
+  'megin-behavior-contract',
+  'megin-bug-diagnosis',
+  'megin-code-review',
+  'megin-finishing-delivery',
+  'megin-human-acceptance',
+  'megin-implementation-execution',
+  'megin-project-knowledge',
+  'megin-requirements-discovery',
+  'megin-technical-planning',
+  'megin-test-driven-development',
+  'megin-verification-before-completion'
+] as const);
+
 export function safeArchivePath(fileName: string, expectedRoot: string): string {
-  if (!fileName || fileName.includes('\\') || fileName.startsWith('/') || fileName.startsWith('//')) {
-    throw new Error(`Unsafe ZIP path: ${fileName}`);
-  }
   if (expectedRoot.includes('/') || expectedRoot.includes('\\') || !expectedRoot || expectedRoot === '.' || expectedRoot === '..') {
     throw new Error(`Invalid expected ZIP root: ${expectedRoot}`);
+  }
+  const parts = safeArchiveParts(fileName);
+  if (parts[0] !== expectedRoot) throw new Error(`ZIP entry is outside expected package root: ${fileName}`);
+  return parts.slice(1).join('/');
+}
+
+function safeMeginBundlePath(fileName: string): string {
+  const parts = safeArchiveParts(fileName);
+  if (parts.length === 1 && parts[0] === 'README.md') return 'README.md';
+  if (!MEGIN_SKILL_DIRECTORIES.some(directory => directory === parts[0])) {
+    throw new Error(`Megin bundle contains an unexpected skill directory or path: ${fileName}`);
+  }
+  return parts.join('/');
+}
+
+function safeArchiveParts(fileName: string): string[] {
+  if (!fileName || fileName.includes('\\') || fileName.startsWith('/') || fileName.startsWith('//')) {
+    throw new Error(`Unsafe ZIP path: ${fileName}`);
   }
   const trimmed = fileName.endsWith('/') ? fileName.slice(0, -1) : fileName;
   if (!trimmed || /^[A-Za-z]:/.test(trimmed)) throw new Error(`Unsafe ZIP path: ${fileName}`);
@@ -35,8 +65,7 @@ export function safeArchivePath(fileName: string, expectedRoot: string): string 
   if (parts.some(part => !part || part === '.' || part === '..' || /[<>:"|?*\u0000-\u001f]/.test(part) || /[. ]$/.test(part) || isReservedWindowsName(part))) {
     throw new Error(`Unsafe ZIP path: ${fileName}`);
   }
-  if (parts[0] !== expectedRoot) throw new Error(`ZIP entry is outside expected package root: ${fileName}`);
-  return parts.slice(1).join('/');
+  return parts;
 }
 
 export function validateArchiveEntry(entry: ArchiveEntryLike): void {
@@ -87,7 +116,40 @@ export async function extractReleaseArchive(
   }
 }
 
-async function extractBuffer(archive: Buffer, packageDirectory: string, expectedRoot: string): Promise<void> {
+export async function extractMeginSkillsArchive(
+  archive: Buffer,
+  parentDirectory: string,
+  expectedVersion: string
+): Promise<ExtractedPackage> {
+  if (archive.byteLength === 0 || archive.byteLength > MAX_TOTAL_BYTES) throw new Error('Megin ZIP archive is empty or exceeds the size limit.');
+  if (!expectedVersion) throw new Error('Megin release version is missing.');
+  const temporaryDirectory = await fs.mkdtemp(path.join(parentDirectory, 'manage-extensions-megin-'));
+  const packageDirectory = path.join(temporaryDirectory, 'bundle');
+  try {
+    await fs.mkdir(packageDirectory, { recursive: true });
+    await extractBuffer(archive, packageDirectory, undefined);
+    const rootEntries = await fs.readdir(packageDirectory, { withFileTypes: true });
+    const actualDirectories = rootEntries.filter(entry => entry.isDirectory()).map(entry => entry.name).sort();
+    const expectedDirectories = [...MEGIN_SKILL_DIRECTORIES].sort();
+    if (actualDirectories.length !== expectedDirectories.length || actualDirectories.some((name, index) => name !== expectedDirectories[index])) {
+      throw new Error('Megin archive must contain exactly the twelve supported skill directories.');
+    }
+    for (const directory of MEGIN_SKILL_DIRECTORIES) {
+      const root = path.join(packageDirectory, directory);
+      const rootStat = await fs.lstat(root);
+      if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) throw new Error(`Megin skill path is not a regular directory: ${directory}`);
+      const skill = path.join(root, 'SKILL.md');
+      const skillStat = await fs.lstat(skill).catch(() => undefined);
+      if (!skillStat?.isFile() || skillStat.isSymbolicLink()) throw new Error(`Megin archive is missing a regular ${directory}/SKILL.md.`);
+    }
+    return { temporaryDirectory, packageDirectory, version: expectedVersion };
+  } catch (error) {
+    await fs.rm(temporaryDirectory, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+async function extractBuffer(archive: Buffer, packageDirectory: string, expectedRoot: string | undefined): Promise<void> {
   const zipFile = await openBuffer(archive);
   if (zipFile.entryCount > MAX_ENTRIES) {
     zipFile.close();
@@ -120,7 +182,7 @@ async function extractBuffer(archive: Buffer, packageDirectory: string, expected
         if ((unixType === 0x4000 && !isDirectory) || (unixType === 0x8000 && isDirectory)) throw new Error(`ZIP entry type does not match its path: ${entry.fileName}`);
         totalBytes += entry.uncompressedSize;
         if (totalBytes > MAX_TOTAL_BYTES) throw new Error('ZIP archive exceeds the expanded size limit.');
-        const relative = safeArchivePath(entry.fileName, expectedRoot);
+        const relative = expectedRoot ? safeArchivePath(entry.fileName, expectedRoot) : safeMeginBundlePath(entry.fileName);
         if (!relative) {
           if (!entry.fileName.endsWith('/')) throw new Error('ZIP root entry must be a directory.');
           return;
