@@ -11,6 +11,12 @@ Before replacing MergeReviewer, the extension compares every installed file with
 
 The Activity Bar view shows each tool's installed version and available release. Startup checks can be disabled with `manageExtensions.checkUpdatesOnStartup`. Checks never install updates automatically.
 
+## Browse features and copy Codex templates
+
+Click either tool in the **Repo Tools** Activity Bar view to open its guide. The guide explains what the tool can do, shows its Codex keyword, and offers a searchable set of example prompts. Use **Copy Keyword** for `$codebase-wiki` or `$merge-reviewer`. Each template can be edited in the guide before **Copy Template**; **Reset** restores the bundled example. Paste the result into Codex and replace placeholders such as `{模組路徑}` or `{基礎分支}` with your values.
+
+Reading guides and copying text work even before installation or when the workspace is not eligible for installation. The guide's **Install / Update** button uses the same existing verified installation flow as the Activity Bar action. The bundled examples are curated from the upstream [Codebase LLM Wiki Codex guide](https://github.com/dennis8499/code-base-llm-wiki/blob/main/Codex.md) and [MergeReviewer usage guide](https://github.com/dennis8499/MergeReviewer/blob/main/README.md); consult the guide shipped with an installed release if its usage changes later.
+
 ## Requirements
 
 - Windows 10 or later, VS Code 1.95 or later, and a trusted local Git repository.

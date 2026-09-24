@@ -64,3 +64,18 @@ Feature: Install curated repository tools into a Windows VS Code workspace
     Then the upstream upgrade is previewed and exact-version apply preserves wiki content
     When I repeat installation of the current Wiki release
     Then the upstream upgrade preview runs without applying or prompting again
+
+  @ME-010
+  Scenario: Browse both product guides without an installable workspace
+    Given the two curated product guides
+    When I open each guide without an eligible workspace
+    Then each guide explains its capabilities and shows its Codex keyword and editable templates
+    And the existing installation action remains available
+
+  @ME-011
+  Scenario: Copy a keyword or a personally edited template
+    Given the MergeReviewer guide is open
+    When I edit its quick review template and copy it
+    Then the exact edited template is copied
+    And I can copy the MergeReviewer keyword without installing it
+    And an unknown product or template cannot supply clipboard text
