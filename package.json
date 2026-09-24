@@ -20,7 +20,9 @@
     "onView:manageExtensions.products",
     "onCommand:manageExtensions.install",
     "onCommand:manageExtensions.update",
-    "onCommand:manageExtensions.checkUpdates"
+    "onCommand:manageExtensions.checkUpdates",
+    "onCommand:manageExtensions.showDetails",
+    "onCommand:manageExtensions.copyKeyword"
   ],
   "contributes": {
     "viewsContainers": {
@@ -60,6 +62,16 @@
       {
         "command": "manageExtensions.openRelease",
         "title": "ManageExtensions: Open GitHub Release"
+      },
+      {
+        "command": "manageExtensions.showDetails",
+        "title": "ManageExtensions: View Tool Guide",
+        "icon": "$(book)"
+      },
+      {
+        "command": "manageExtensions.copyKeyword",
+        "title": "ManageExtensions: Copy Codex Keyword",
+        "icon": "$(copy)"
       }
     ],
     "menus": {
@@ -78,6 +90,16 @@
           "command": "manageExtensions.openRelease",
           "when": "view == manageExtensions.products && viewItem != manageExtensions.product.unavailable",
           "group": "navigation"
+        },
+        {
+          "command": "manageExtensions.showDetails",
+          "when": "view == manageExtensions.products",
+          "group": "navigation@1"
+        },
+        {
+          "command": "manageExtensions.copyKeyword",
+          "when": "view == manageExtensions.products",
+          "group": "inline@2"
         }
       ],
       "view/title": [

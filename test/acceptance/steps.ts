@@ -4,6 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { After, Given, Then, When, setWorldConstructor } from '@cucumber/cucumber';
 import { PRODUCT_CATALOG } from '../../src/catalog';
+import { getProductGuide, PRODUCT_GUIDES } from '../../src/productGuides';
+import { copyGuideRequest, renderProductGuideHtml } from '../../src/productGuidePage';
 import { installMergeReviewer } from '../../src/adapters/mergeReviewerInstaller';
 import { type InstallInteraction } from '../../src/adapters/interaction';
 import { installWiki } from '../../src/adapters/wikiInstaller';
@@ -29,6 +31,9 @@ class AcceptanceWorld {
   installedVersion?: string;
   beforeTree?: Record<string, string>;
   applied = false;
+  guideHtml: string[] = [];
+  editedTemplate = '';
+  copiedText = '';
 
   async createRoot(): Promise<string> {
     if (this.root) this.extraRoots.push(this.root);
@@ -334,6 +339,62 @@ Then('the upstream upgrade preview runs without applying or prompting again', fu
   assert.equal(this.processCalls[2].args.includes('--apply'), false);
   assert.equal(this.applied, true);
   assert.equal(this.prompts.filter(prompt => prompt.startsWith('Apply Codebase LLM Wiki')).length, 1);
+});
+
+Given('the two curated product guides', function() {
+  assert.deepEqual(PRODUCT_GUIDES.map(guide => guide.productId), PRODUCT_CATALOG.map(product => product.id));
+});
+
+When('I open each guide without an eligible workspace', function(this: AcceptanceWorld) {
+  this.guideHtml = PRODUCT_GUIDES.map(guide => renderProductGuideHtml(guide, 'test-nonce'));
+});
+
+Then('each guide explains its capabilities and shows its Codex keyword and editable templates', function(this: AcceptanceWorld) {
+  assert.equal(this.guideHtml.length, 2);
+  for (const [index, guide] of PRODUCT_GUIDES.entries()) {
+    const html = this.guideHtml[index];
+    assert.ok(html.includes(guide.keyword));
+    assert.ok(html.includes(guide.summary));
+    assert.ok(html.includes('<textarea'));
+    assert.ok(html.includes('data-action="copy-keyword"'));
+    assert.ok(html.includes('data-action="copy-template"'));
+    assert.ok(guide.features.length > 0);
+  }
+});
+
+Then('the existing installation action remains available', function(this: AcceptanceWorld) {
+  for (const html of this.guideHtml) assert.ok(html.includes('data-action="install"'));
+});
+
+Given('the MergeReviewer guide is open', function() {
+  assert.ok(getProductGuide('merge-reviewer'));
+});
+
+When('I edit its quick review template and copy it', async function(this: AcceptanceWorld) {
+  const guide = getProductGuide('merge-reviewer')!;
+  this.editedTemplate = '$merge-reviewer 快速審查 遠端=upstream';
+  await copyGuideRequest(guide, {
+    action: 'copy-template', productId: guide.productId, featureId: 'quick-review', text: this.editedTemplate
+  }, async text => { this.copiedText = text; });
+});
+
+Then('the exact edited template is copied', function(this: AcceptanceWorld) {
+  assert.equal(this.copiedText, this.editedTemplate);
+});
+
+Then('I can copy the MergeReviewer keyword without installing it', async function(this: AcceptanceWorld) {
+  const guide = getProductGuide('merge-reviewer')!;
+  await copyGuideRequest(guide, { action: 'copy-keyword', productId: guide.productId }, async text => { this.copiedText = text; });
+  assert.equal(this.copiedText, '$merge-reviewer');
+});
+
+Then('an unknown product or template cannot supply clipboard text', async function(this: AcceptanceWorld) {
+  const guide = getProductGuide('merge-reviewer')!;
+  let writeCount = 0;
+  const write = async (_text: string) => { writeCount++; };
+  await assert.rejects(() => copyGuideRequest(guide, { action: 'copy-keyword', productId: 'other' }, write));
+  await assert.rejects(() => copyGuideRequest(guide, { action: 'copy-template', productId: guide.productId, featureId: 'unknown', text: 'bad' }, write));
+  assert.equal(writeCount, 0);
 });
 
 function release(tag: string): GitHubRelease { return { tag_name: tag, prerelease: false, draft: false, assets: [] }; }

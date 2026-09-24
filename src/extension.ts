@@ -8,6 +8,7 @@ import { installWiki } from './adapters/wikiInstaller';
 import { GitHubReleaseClient, type GitHubRelease } from './github/releases';
 import { compareVersions, parseStableVersionTag } from './version';
 import { eligibleGitWorkspace, resolveInstallTarget, type InstallTarget, type WorkspaceCandidate } from './workspace/target';
+import { copyProductKeyword, ProductGuideView } from './productGuideView';
 
 const CHECK_CACHE_KEY = 'manageExtensions.releaseChecks';
 const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
@@ -44,6 +45,7 @@ class ProductProvider implements vscode.TreeDataProvider<ProductTreeItem> {
     const products = await Promise.all(PRODUCT_CATALOG.map(async product => {
       const item = new ProductTreeItem(product.id);
       item.label = product.title;
+      item.command = { command: 'manageExtensions.showDetails', title: '查看功能與模板', arguments: [product.id] };
       const check = checks[product.id];
       if (target) {
         const installed = await readInstalledVersion(target.root, product);
@@ -90,7 +92,8 @@ class ProductProvider implements vscode.TreeDataProvider<ProductTreeItem> {
 export function activate(context: vscode.ExtensionContext): void {
   const client = new GitHubReleaseClient();
   const provider = new ProductProvider(context);
-  context.subscriptions.push(provider, vscode.window.registerTreeDataProvider('manageExtensions.products', provider));
+  const guideView = new ProductGuideView();
+  context.subscriptions.push(provider, guideView, vscode.window.registerTreeDataProvider('manageExtensions.products', provider));
 
   context.subscriptions.push(
     vscode.commands.registerCommand('manageExtensions.install', async (argument?: unknown) => {
@@ -103,6 +106,20 @@ export function activate(context: vscode.ExtensionContext): void {
       await checkUpdates(context, client, provider, true);
     }),
     vscode.commands.registerCommand('manageExtensions.refresh', () => provider.refresh()),
+    vscode.commands.registerCommand('manageExtensions.showDetails', async (argument?: unknown) => {
+      const product = productFromArgument(argument) ?? await selectProduct();
+      if (product) guideView.show(product, () => runInstallCommand(context, client, provider, product.id));
+    }),
+    vscode.commands.registerCommand('manageExtensions.copyKeyword', async (argument?: unknown) => {
+      const product = productFromArgument(argument) ?? await selectProduct();
+      if (!product) return;
+      try {
+        const keyword = await copyProductKeyword(product.id);
+        vscode.window.setStatusBarMessage(`已複製 ${keyword}`, 3000);
+      } catch (error) {
+        await vscode.window.showErrorMessage(errorMessage(error));
+      }
+    }),
     vscode.commands.registerCommand('manageExtensions.openRelease', async (argument?: unknown) => {
       const product = productFromArgument(argument) ?? await selectProduct();
       if (product) await vscode.env.openExternal(vscode.Uri.parse(product.releasePage));
