@@ -1,0 +1,145 @@
+{
+  "name": "manage-extensions",
+  "displayName": "ManageExtensions",
+  "description": "Install and update curated GitHub repository tools in a VS Code workspace.",
+  "version": "0.1.0",
+  "publisher": "dennis8499",
+  "license": "UNLICENSED",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "extensionKind": [
+    "workspace"
+  ],
+  "main": "./out/src/extension.js",
+  "activationEvents": [
+    "onStartupFinished",
+    "onView:manageExtensions.products",
+    "onCommand:manageExtensions.install",
+    "onCommand:manageExtensions.update",
+    "onCommand:manageExtensions.checkUpdates"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "manageExtensions",
+          "title": "Manage Extensions",
+          "icon": "resources/manage-extensions.svg"
+        }
+      ]
+    },
+    "views": {
+      "manageExtensions": [
+        {
+          "id": "manageExtensions.products",
+          "name": "Repo Tools"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "manageExtensions.install",
+        "title": "ManageExtensions: Install Repo Tool"
+      },
+      {
+        "command": "manageExtensions.update",
+        "title": "ManageExtensions: Update Repo Tool"
+      },
+      {
+        "command": "manageExtensions.checkUpdates",
+        "title": "ManageExtensions: Check for Updates"
+      },
+      {
+        "command": "manageExtensions.refresh",
+        "title": "ManageExtensions: Refresh Status"
+      },
+      {
+        "command": "manageExtensions.openRelease",
+        "title": "ManageExtensions: Open GitHub Release"
+      }
+    ],
+    "menus": {
+      "view/item/context": [
+        {
+          "command": "manageExtensions.install",
+          "when": "view == manageExtensions.products && viewItem == manageExtensions.product.notInstalled",
+          "group": "inline"
+        },
+        {
+          "command": "manageExtensions.update",
+          "when": "view == manageExtensions.products && viewItem == manageExtensions.product.outdated",
+          "group": "inline"
+        },
+        {
+          "command": "manageExtensions.openRelease",
+          "when": "view == manageExtensions.products && viewItem != manageExtensions.product.unavailable",
+          "group": "navigation"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "manageExtensions.checkUpdates",
+          "when": "view == manageExtensions.products",
+          "group": "navigation"
+        },
+        {
+          "command": "manageExtensions.refresh",
+          "when": "view == manageExtensions.products",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "ManageExtensions",
+      "properties": {
+        "manageExtensions.checkUpdatesOnStartup": {
+          "type": "boolean",
+          "default": true,
+          "description": "Check curated GitHub releases when the extension starts. Updates are never installed automatically."
+        }
+      }
+    },
+    "capabilities": {
+      "virtualWorkspaces": {
+        "supported": false,
+        "description": "ManageExtensions writes files to a local Windows Git repository."
+      },
+      "untrustedWorkspaces": {
+        "supported": "limited",
+        "description": "Installing repository tools writes files and runs the curated Codebase LLM Wiki installer. Trust the workspace before installing."
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p .",
+    "watch": "tsc -watch -p .",
+    "test:unit": "node --test out/test/unit/*.test.js",
+    "test:acceptance": "cucumber-js --require out/test/acceptance/steps.js \"features/**/*.feature\"",
+    "test:vscode": "vscode-test",
+    "test": "npm run compile && npm run test:unit && npm run test:acceptance && npm run test:vscode",
+    "package": "npm run compile && node -e \"require('node:fs').mkdirSync('dist',{recursive:true})\" && vsce package --allow-missing-repository --out dist/manage-extensions-0.1.0.vsix"
+  },
+  "dependencies": {
+    "yauzl": "^3.2.0"
+  },
+  "devDependencies": {
+    "@cucumber/cucumber": "^12.2.0",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^24.0.0",
+    "@types/vscode": "^1.95.0",
+    "@types/yauzl": "^2.10.3",
+    "@vscode/test-cli": "^0.0.15",
+    "@vscode/test-electron": "^2.5.2",
+    "@vscode/vsce": "^3.6.0",
+    "typescript": "^5.8.3"
+  },
+  "overrides": {
+    "@vscode/test-cli": {
+      "mocha": "^12.0.2"
+    }
+  }
+}
