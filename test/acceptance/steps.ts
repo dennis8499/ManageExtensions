@@ -27,6 +27,11 @@ type ReleaseVersionTools = {
 };
 const releaseVersionTools = require(path.join(process.cwd(), 'scripts', 'check-release.cjs')) as ReleaseVersionTools;
 
+async function createCanonicalTempDirectory(prefix: string): Promise<string> {
+  const tempRoot = await fs.realpath(os.tmpdir());
+  return fs.mkdtemp(path.join(tempRoot, prefix));
+}
+
 class AcceptanceWorld {
   root?: string;
   extraRoots: string[] = [];
@@ -53,7 +58,7 @@ class AcceptanceWorld {
 
   async createRoot(): Promise<string> {
     if (this.root) this.extraRoots.push(this.root);
-    this.root = await fs.mkdtemp(path.join(os.tmpdir(), 'manage-ext-accept-'));
+    this.root = await createCanonicalTempDirectory('manage-ext-accept-');
     this.target = { name: 'acceptance-project', root: this.root };
     return this.root;
   }
@@ -261,8 +266,8 @@ Then('no release content is written until I explicitly choose to install or upda
 });
 
 Given('two trusted local Git repositories are open in VS Code', async function(this: AcceptanceWorld) {
-  const first = await fs.mkdtemp(path.join(os.tmpdir(), 'manage-ext-a-'));
-  const second = await fs.mkdtemp(path.join(os.tmpdir(), 'manage-ext-b-'));
+  const first = await createCanonicalTempDirectory('manage-ext-a-');
+  const second = await createCanonicalTempDirectory('manage-ext-b-');
   this.extraRoots = [first, second];
   await runProcess('git', ['init', '--quiet'], { cwd: first });
   await runProcess('git', ['init', '--quiet'], { cwd: second });
@@ -520,8 +525,8 @@ Then('the missing skill is reported and the workspace remains unchanged', async 
 });
 
 Given('two trusted local folders are open for Megin', async function(this: AcceptanceWorld) {
-  const gitRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'manage-ext-megin-multi-git-'));
-  const plainRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'manage-ext-megin-multi-plain-'));
+  const gitRoot = await createCanonicalTempDirectory('manage-ext-megin-multi-git-');
+  const plainRoot = await createCanonicalTempDirectory('manage-ext-megin-multi-plain-');
   this.extraRoots.push(gitRoot, plainRoot);
   await runProcess('git', ['init', '--quiet'], { cwd: gitRoot });
   this.candidates = [{ name: 'repo', fsPath: gitRoot, scheme: 'file' }, { name: 'group', fsPath: plainRoot, scheme: 'file' }];

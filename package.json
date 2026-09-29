@@ -2,7 +2,7 @@
   "name": "manage-extensions",
   "displayName": "ManageExtensions",
   "description": "Install and update curated GitHub repository tools in a VS Code workspace.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "publisher": "dennis8499",
   "repository": {
     "type": "git",
