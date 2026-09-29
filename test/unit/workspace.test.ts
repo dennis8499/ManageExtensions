@@ -27,8 +27,9 @@ test('rejects non-Windows, untrusted, non-file and non-Git workspaces before sel
 
 test('requires a selection in multi-root workspaces and resolves only Git repository roots', async t => {
   if (process.platform !== 'win32') { t.skip('Windows local paths are required by the install boundary.'); return; }
-  const first = await fs.mkdtemp(path.join(os.tmpdir(), 'manage-ext-git-a-'));
-  const second = await fs.mkdtemp(path.join(os.tmpdir(), 'manage-ext-git-b-'));
+  const tempRoot = await fs.realpath(os.tmpdir());
+  const first = await fs.mkdtemp(path.join(tempRoot, 'manage-ext-git-a-'));
+  const second = await fs.mkdtemp(path.join(tempRoot, 'manage-ext-git-b-'));
   const initFirst = await runProcess('git', ['init', '--quiet'], { cwd: first });
   const initSecond = await runProcess('git', ['init', '--quiet'], { cwd: second });
   assert.equal(initFirst.exitCode, 0);
@@ -63,8 +64,9 @@ test('rejects mapped network drives and unknown drive types for Windows install 
 
 test('Megin target selection accepts Git and non-Git local roots and requires a multi-root choice', async t => {
   if (process.platform !== 'win32') { t.skip('Windows local paths are required by the install boundary.'); return; }
-  const gitRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'manage-ext-megin-git-'));
-  const plainRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'manage-ext-megin-plain-'));
+  const tempRoot = await fs.realpath(os.tmpdir());
+  const gitRoot = await fs.mkdtemp(path.join(tempRoot, 'manage-ext-megin-git-'));
+  const plainRoot = await fs.mkdtemp(path.join(tempRoot, 'manage-ext-megin-plain-'));
   await runProcess('git', ['init', '--quiet'], { cwd: gitRoot });
   const gitCandidate = { name: 'repo', fsPath: gitRoot, scheme: 'file' };
   const plainCandidate = { name: 'group', fsPath: plainRoot, scheme: 'file' };
