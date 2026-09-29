@@ -125,3 +125,18 @@ Feature: Install curated repository tools into a Windows VS Code workspace
     Given an older Megin installation and a newer stable release
     When a Megin replacement step fails
     Then every old skill and the old version metadata are restored
+
+  @ME-019
+  Scenario: Validate a stable release tag against the package version
+    Given the project release metadata
+    When I validate the project version as a stable release tag
+    Then the release is accepted at the manifest version
+    And the VSIX filename uses that version
+
+  @ME-020
+  Scenario: Reject a release tag that is invalid or does not match the package version
+    Given the project release metadata
+    When I validate a stable tag that differs from the package version
+    Then release validation fails before packaging
+    When I validate release tag "v0.1.0-beta.1"
+    Then release validation fails before packaging

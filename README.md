@@ -44,4 +44,17 @@ npm test
 npm run package
 ```
 
-The VSIX is written to `dist/manage-extensions-0.1.0.vsix`. Install it with VS Code's **Install from VSIX...** command. The VS Code host test downloads a stable VS Code test runtime on first use if one is not cached.
+The versioned VSIX is written to `dist/manage-extensions-<version>.vsix`; for the current version it is `dist/manage-extensions-0.1.0.vsix`. Install it with VS Code's **Install from VSIX...** command. The VS Code host test downloads a stable VS Code test runtime on first use if one is not cached.
+
+## GitHub Releases
+
+The extension version is stored in `package.json`; keep `package-lock.json` in sync. GitHub Actions validates a stable `vX.Y.Z` tag against both files, runs the tests, packages the VSIX, and publishes it as a GitHub Release. Release tags must point to commits on `main`.
+
+For the first release, merge the release workflow to `main`, confirm that `v0.1.0` is not already used on GitHub, then create and push the tag:
+
+```powershell
+git tag -a v0.1.0 -m "v0.1.0"
+git push origin v0.1.0
+```
+
+For later releases, update both version fields with the appropriate SemVer increment, commit and merge the change to `main`, then tag and push the matching `vX.Y.Z` version. For example, `npm version patch --no-git-tag-version` increments a patch version without creating a commit or tag. Download the resulting VSIX from the GitHub Release and install it with **Install from VSIX...**.

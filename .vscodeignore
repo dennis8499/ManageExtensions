@@ -2,6 +2,8 @@
 .vscode-test/**
 features/**
 test/**
+scripts/**
+.github/**
 src/**
 out/test/**
 out/**/*.map

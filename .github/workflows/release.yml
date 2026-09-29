@@ -1,0 +1,113 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: none
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-2025
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Validate release tag and main branch
+        shell: pwsh
+        env:
+          RELEASE_TAG_CREATED: ${{ github.event.created }}
+        run: |
+          if ($env:RELEASE_TAG_CREATED -ne 'true') { throw 'Release tags must be newly created; existing tags are never reused.' }
+
+          node scripts/check-release.cjs $env:GITHUB_REF_NAME
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          git merge-base --is-ancestor $env:GITHUB_SHA refs/remotes/origin/main
+          if ($LASTEXITCODE -ne 0) { throw 'Release tag must point to a commit reachable from main.' }
+
+      - name: Install dependencies
+        run: npm.cmd ci
+
+      - name: Run tests
+        run: npm.cmd test
+
+      - name: Package extension
+        run: npm.cmd run package
+
+      - name: Verify VSIX artifact
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $files = @(Get-ChildItem -Path dist -Filter '*.vsix' -File)
+          if ($files.Count -ne 1) { throw "Expected exactly one VSIX in dist; found $($files.Count)." }
+
+          $expectedName = "manage-extensions-$version.vsix"
+          if ($files[0].Name -ne $expectedName) { throw "Expected $expectedName; found $($files[0].Name)." }
+
+          node scripts/check-release.cjs $env:GITHUB_REF_NAME --vsix $files[0].FullName
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload verified VSIX
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: manage-extensions-vsix
+          path: dist/*.vsix
+          if-no-files-found: error
+          compression-level: 0
+
+  publish:
+    needs: build
+    runs-on: windows-2025
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Download verified VSIX and publish GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          gh run download $env:GITHUB_RUN_ID --repo $env:GITHUB_REPOSITORY --name manage-extensions-vsix --dir dist
+          if ($LASTEXITCODE -ne 0) { throw 'Could not download the verified VSIX artifact.' }
+
+          $version = $tag.Substring(1)
+          $expectedName = "manage-extensions-$version.vsix"
+          $files = @(Get-ChildItem -Path dist -Filter '*.vsix' -File)
+          if ($files.Count -ne 1 -or $files[0].Name -ne $expectedName) {
+            throw "Expected exactly $expectedName from the build artifact."
+          }
+
+          gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) { throw "Release $tag already exists; refusing to overwrite it." }
+
+          $vsixPath = Join-Path 'dist' "manage-extensions-$version.vsix"
+          gh release create $tag $vsixPath --repo $env:GITHUB_REPOSITORY --draft --verify-tag --generate-notes --title $tag
+          if ($LASTEXITCODE -ne 0) { throw "Could not create draft release $tag." }
+
+          $releaseJson = gh release view $tag --repo $env:GITHUB_REPOSITORY --json isDraft,assets
+          if ($LASTEXITCODE -ne 0) { throw "Could not verify draft release $tag." }
+          $release = $releaseJson | ConvertFrom-Json
+          if (-not $release.isDraft -or $release.assets.Count -ne 1 -or $release.assets[0].name -ne [IO.Path]::GetFileName($vsixPath)) {
+            throw "Draft release $tag does not contain exactly the expected VSIX."
+          }
+
+          gh release edit $tag --repo $env:GITHUB_REPOSITORY --draft=false
+          if ($LASTEXITCODE -ne 0) { throw "Could not publish release $tag." }

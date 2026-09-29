@@ -4,6 +4,10 @@
   "description": "Install and update curated GitHub repository tools in a VS Code workspace.",
   "version": "0.1.0",
   "publisher": "dennis8499",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dennis8499/ManageExtensions.git"
+  },
   "license": "UNLICENSED",
   "engines": {
     "vscode": "^1.95.0"
@@ -143,7 +147,7 @@
     "test:acceptance": "cucumber-js --require out/test/acceptance/steps.js \"features/**/*.feature\"",
     "test:vscode": "vscode-test",
     "test": "npm run compile && npm run test:unit && npm run test:acceptance && npm run test:vscode",
-    "package": "npm run compile && node -e \"require('node:fs').mkdirSync('dist',{recursive:true})\" && vsce package --allow-missing-repository --out dist/manage-extensions-0.1.0.vsix"
+    "package": "npm run compile && node -e \"require('node:fs').mkdirSync('dist',{recursive:true})\" && vsce package --out dist"
   },
   "dependencies": {
     "yauzl": "^3.2.0"

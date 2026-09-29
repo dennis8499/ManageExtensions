@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { After, Given, Then, When, setWorldConstructor } from '@cucumber/cucumber';
@@ -17,6 +18,14 @@ import { runProcess, type ProcessResult, type PythonCommand } from '../../src/pr
 import { compareVersions, parseStableVersionTag } from '../../src/version';
 import { isLocalWindowsDrive, resolveInstallTarget, resolveMeginInstallTarget, type InstallTarget, type WorkspaceCandidate } from '../../src/workspace/target';
 import { makeMeginZip, makeSkillZip, makeWikiZip, makeZip, MEGIN_SKILL_DIRECTORIES } from '../helpers/zip';
+
+type ReleasePackageManifest = { name: string; version: string };
+type ReleasePackageLock = { version: string; packages?: Record<string, { version?: string }> };
+type ReleaseVersionTools = {
+  validateReleaseVersion(tag: string, manifest: ReleasePackageManifest, lock: ReleasePackageLock): string;
+  vsixFilename(name: string, version: string): string;
+};
+const releaseVersionTools = require(path.join(process.cwd(), 'scripts', 'check-release.cjs')) as ReleaseVersionTools;
 
 class AcceptanceWorld {
   root?: string;
@@ -37,6 +46,10 @@ class AcceptanceWorld {
   guideHtml: string[] = [];
   editedTemplate = '';
   copiedText = '';
+  releaseManifest?: ReleasePackageManifest;
+  releaseLock?: ReleasePackageLock;
+  validatedReleaseVersion?: string;
+  releaseValidationError?: string;
 
   async createRoot(): Promise<string> {
     if (this.root) this.extraRoots.push(this.root);
@@ -564,6 +577,56 @@ When('a Megin replacement step fails', async function(this: AcceptanceWorld) {
 Then('every old skill and the old version metadata are restored', async function(this: AcceptanceWorld) {
   assert.match(this.errors.join('\n'), /simulated replacement failure/);
   assert.deepEqual(await treeSnapshot(path.join(this.target!.root, '.agents')), this.beforeTree);
+});
+
+Given('the project release metadata', function(this: AcceptanceWorld) {
+  this.releaseManifest = JSON.parse(readFileSync(path.join(process.cwd(), 'package.json'), 'utf8')) as ReleasePackageManifest;
+  this.releaseLock = JSON.parse(readFileSync(path.join(process.cwd(), 'package-lock.json'), 'utf8')) as ReleasePackageLock;
+});
+
+When('I validate the project version as a stable release tag', function(this: AcceptanceWorld) {
+  this.releaseValidationError = undefined;
+  try {
+    this.validatedReleaseVersion = releaseVersionTools.validateReleaseVersion(
+      `v${this.releaseManifest!.version}`, this.releaseManifest!, this.releaseLock!
+    );
+  } catch (error) {
+    this.releaseValidationError = error instanceof Error ? error.message : String(error);
+  }
+});
+
+When('I validate a stable tag that differs from the package version', function(this: AcceptanceWorld) {
+  const [major, minor, patch] = this.releaseManifest!.version.split('.').map(Number);
+  const mismatchedTag = `v${major}.${minor}.${patch + 1}`;
+  this.releaseValidationError = undefined;
+  try {
+    this.validatedReleaseVersion = releaseVersionTools.validateReleaseVersion(mismatchedTag, this.releaseManifest!, this.releaseLock!);
+  } catch (error) {
+    this.releaseValidationError = error instanceof Error ? error.message : String(error);
+  }
+});
+
+When('I validate release tag {string}', function(this: AcceptanceWorld, tag: string) {
+  this.releaseValidationError = undefined;
+  try {
+    this.validatedReleaseVersion = releaseVersionTools.validateReleaseVersion(tag, this.releaseManifest!, this.releaseLock!);
+  } catch (error) {
+    this.releaseValidationError = error instanceof Error ? error.message : String(error);
+  }
+});
+
+Then('the release is accepted at the manifest version', function(this: AcceptanceWorld) {
+  assert.equal(this.validatedReleaseVersion, this.releaseManifest?.version);
+  assert.equal(this.releaseValidationError, undefined);
+});
+
+Then('the VSIX filename uses that version', function(this: AcceptanceWorld) {
+  assert.equal(releaseVersionTools.vsixFilename(this.releaseManifest!.name, this.validatedReleaseVersion!),
+    `${this.releaseManifest!.name}-${this.releaseManifest!.version}.vsix`);
+});
+
+Then('release validation fails before packaging', function(this: AcceptanceWorld) {
+  assert.match(this.releaseValidationError ?? '', /stable SemVer|does not match/);
 });
 
 function release(tag: string): GitHubRelease { return { tag_name: tag, prerelease: false, draft: false, assets: [] }; }
